@@ -21,7 +21,6 @@ jobs:
         cors: '*'
     - run: mkdir ~/.aws && echo -e "[default]\nregion = eu-west-1" > ~/.aws/config
     - run: echo -e "[default]\naws_access_key_id=12341234\naws_secret_access_key=12341234" > ~/.aws/credentials
-    - run: cargo build
     - run: cargo test
 
   rustfmt:
