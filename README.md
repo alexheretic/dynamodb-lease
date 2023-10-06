@@ -38,13 +38,13 @@ cargo test
 ### AWS setup
 You may also need to setup some aws config, e.g.
 - setup `~/.aws/config` 
-    ```
-    [default]
-    region = eu-west-1
-    ```
+  ```
+  [default]
+  region = eu-west-1
+  ```
 - setup `~/.aws/credentials` with fakes values
-    ```
-    [default]
-    aws_access_key_id=access_key
-    aws_secret_access_key=secret_access_key
-    ```
+  ```
+  [default]
+  aws_access_key_id=12341234
+  aws_secret_access_key=12341234
+  ```
