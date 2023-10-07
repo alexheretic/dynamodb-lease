@@ -1,3 +1,6 @@
+## Unreleased (0.18.0)
+* Update _aws-sdk-dynamodb_ to `0.33`.
+
 ## 0.17.0
 * Update _aws-sdk-dynamodb_ to `0.32`.
 
