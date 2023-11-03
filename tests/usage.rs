@@ -268,13 +268,15 @@ async fn init_should_check_hash_key() {
             AttributeDefinition::builder()
                 .attribute_name("wrong")
                 .attribute_type(ScalarAttributeType::S)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .key_schema(
             KeySchemaElement::builder()
                 .attribute_name("wrong")
                 .key_type(KeyType::Hash)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .send()
         .await;
@@ -304,13 +306,15 @@ async fn init_should_check_hash_key_type() {
             AttributeDefinition::builder()
                 .attribute_name("key")
                 .attribute_type(ScalarAttributeType::N)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .key_schema(
             KeySchemaElement::builder()
                 .attribute_name("key")
                 .key_type(KeyType::Hash)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .send()
         .await;
@@ -340,13 +344,15 @@ async fn init_should_check_ttl() {
             AttributeDefinition::builder()
                 .attribute_name("key")
                 .attribute_type(ScalarAttributeType::S)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .key_schema(
             KeySchemaElement::builder()
                 .attribute_name("key")
                 .key_type(KeyType::Hash)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .send()
         .await;
