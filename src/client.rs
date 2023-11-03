@@ -218,19 +218,18 @@ impl Client {
             key_schema.len() == 1,
             "Unexpected number of keys ({}) in key_schema, expected 1. Got {:?}",
             key_schema.len(),
-            vec(key_schema.iter().map(|k| k.attribute_name().unwrap_or("?"))),
+            vec(key_schema.iter().map(|k| k.attribute_name())),
         );
         let described_kind = attrs
             .iter()
-            .find(|attr| attr.attribute_name() == Some(KEY_FIELD))
+            .find(|attr| attr.attribute_name() == KEY_FIELD)
             .with_context(|| {
                 format!(
                     "Missing attribute definition for {KEY_FIELD}, available {:?}",
-                    vec(attrs.iter().filter_map(|a| a.attribute_name()))
+                    vec(attrs.iter().map(|a| a.attribute_name()))
                 )
             })?
-            .attribute_type()
-            .with_context(|| format!("Missing attribute type for {KEY_FIELD}"))?;
+            .attribute_type();
         ensure!(
             described_kind == &ScalarAttributeType::S,
             "Unexpected attribute type `{:?}` for {}, expected `{:?}`",
@@ -241,15 +240,14 @@ impl Client {
 
         let described_key_type = key_schema
             .iter()
-            .find(|k| k.attribute_name() == Some(KEY_FIELD))
+            .find(|k| k.attribute_name() == KEY_FIELD)
             .with_context(|| {
                 format!(
                     "Missing key schema for {KEY_FIELD}, available {:?}",
-                    vec(key_schema.iter().filter_map(|k| k.attribute_name()))
+                    vec(key_schema.iter().map(|k| k.attribute_name()))
                 )
             })?
-            .key_type()
-            .with_context(|| format!("Missing key type for {KEY_FIELD}"))?;
+            .key_type();
         ensure!(
             described_key_type == &KeyType::Hash,
             "Unexpected key type `{:?}` for {}, expected `{:?}`",

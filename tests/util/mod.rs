@@ -32,13 +32,15 @@ pub async fn create_lease_table(table_name: &str, client: &aws_sdk_dynamodb::Cli
             AttributeDefinition::builder()
                 .attribute_name("key")
                 .attribute_type(ScalarAttributeType::S)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .key_schema(
             KeySchemaElement::builder()
                 .attribute_name("key")
                 .key_type(KeyType::Hash)
-                .build(),
+                .build()
+                .unwrap(),
         )
         .send()
         .await;
@@ -61,7 +63,8 @@ pub async fn create_lease_table(table_name: &str, client: &aws_sdk_dynamodb::Cli
             TimeToLiveSpecification::builder()
                 .enabled(true)
                 .attribute_name("lease_expiry")
-                .build(),
+                .build()
+                .unwrap(),
         )
         .send()
         .await;
