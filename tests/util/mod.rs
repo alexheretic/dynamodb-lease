@@ -1,5 +1,6 @@
 pub mod retry;
 
+use aws_config::BehaviorVersion;
 use aws_sdk_dynamodb::{
     error::{ProvideErrorMetadata, SdkError},
     operation::create_table::CreateTableError,
@@ -15,7 +16,10 @@ pub const TEST_WAIT: Duration = Duration::from_secs(4);
 
 /// Config for localhost dynamodb.
 pub async fn localhost_dynamodb() -> aws_sdk_dynamodb::Client {
-    let conf = aws_config::from_env().region("eu-west-1").load().await;
+    let conf = aws_config::defaults(BehaviorVersion::latest())
+        .region("eu-west-1")
+        .load()
+        .await;
     let conf = aws_sdk_dynamodb::config::Builder::from(&conf)
         .endpoint_url("http://localhost:8000")
         .build();
