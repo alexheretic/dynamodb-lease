@@ -34,8 +34,6 @@ const LEASE_VERSION_FIELD: &str = "LeaseVersion";
 pub struct Client {
     pub(crate) client: aws_sdk_dynamodb::Client,
     pub(crate) table_name: Arc<String>,
-    pub(crate) lease_ttl_seconds: u32,
-    pub(crate) extend_period: Duration,
     pub(crate) acquire_cooldown: Duration,
     pub(crate) local_locks: LocalLocks,
 }
@@ -52,14 +50,18 @@ impl Client {
     ///
     /// Does not wait to acquire a lease, to do so see [`Client::acquire`].
     #[instrument(skip_all)]
-    pub async fn try_acquire(&self, key: impl Into<String>) -> anyhow::Result<Option<Lease>> {
+    pub async fn try_acquire(
+        &self,
+        key: impl Into<String>,
+        ttl_seconds: u32,
+    ) -> anyhow::Result<Option<Lease>> {
         let key = key.into();
         let local_guard = match self.local_locks.try_lock(key.clone()) {
             Ok(g) => g,
             Err(_) => return Ok(None),
         };
 
-        match self.put_lease(key).await {
+        match self.put_lease(key, ttl_seconds).await {
             Ok(Some(lease)) => Ok(Some(lease.with_local_guard(local_guard))),
             x => x,
         }
@@ -70,12 +72,12 @@ impl Client {
     ///
     /// To try to acquire without waiting see [`Client::try_acquire`].
     #[instrument(skip_all)]
-    pub async fn acquire(&self, key: impl Into<String>) -> anyhow::Result<Lease> {
+    pub async fn acquire(&self, key: impl Into<String>, ttl_seconds: u32) -> anyhow::Result<Lease> {
         let key = key.into();
         let local_guard = self.local_locks.lock(key.clone()).await;
 
         loop {
-            if let Some(lease) = self.put_lease(key.clone()).await? {
+            if let Some(lease) = self.put_lease(key.clone(), ttl_seconds).await? {
                 return Ok(lease.with_local_guard(local_guard));
             }
             tokio::time::sleep(self.acquire_cooldown).await;
@@ -90,6 +92,7 @@ impl Client {
     pub async fn acquire_timeout(
         &self,
         key: impl Into<String>,
+        ttl_seconds: u32,
         max_wait: Duration,
     ) -> anyhow::Result<Lease> {
         let start = Instant::now();
@@ -100,7 +103,7 @@ impl Client {
             .context("Could not acquire within {max_wait:?}")?;
 
         loop {
-            if let Some(lease) = self.put_lease(key.clone()).await? {
+            if let Some(lease) = self.put_lease(key.clone(), ttl_seconds).await? {
                 return Ok(lease.with_local_guard(local_guard));
             }
             let elapsed = start.elapsed();
@@ -113,9 +116,8 @@ impl Client {
     }
 
     /// Put a new lease into the db.
-    async fn put_lease(&self, key: String) -> anyhow::Result<Option<Lease>> {
-        let expiry_timestamp =
-            OffsetDateTime::now_utc().unix_timestamp() + i64::from(self.lease_ttl_seconds);
+    async fn put_lease(&self, key: String, ttl_seconds: u32) -> anyhow::Result<Option<Lease>> {
+        let expiry_timestamp = OffsetDateTime::now_utc().unix_timestamp() + i64::from(ttl_seconds);
         let lease_v = Uuid::new_v4();
 
         let put = self
@@ -139,7 +141,7 @@ impl Client {
                 Ok(None)
             }
             Err(err) => Err(err.into()),
-            Ok(_) => Ok(Some(Lease::new(self.clone(), key, lease_v))),
+            Ok(_) => Ok(Some(Lease::new(self.clone(), key, lease_v, ttl_seconds))),
         }
     }
 
@@ -171,9 +173,9 @@ impl Client {
         &self,
         key: String,
         lease_v: Uuid,
+        ttl_seconds: u32,
     ) -> Result<Uuid, SdkError<UpdateItemError, orchestrator::HttpResponse>> {
-        let expiry_timestamp =
-            OffsetDateTime::now_utc().unix_timestamp() + i64::from(self.lease_ttl_seconds);
+        let expiry_timestamp = OffsetDateTime::now_utc().unix_timestamp() + i64::from(ttl_seconds);
         let new_lease_v = Uuid::new_v4();
 
         self.client

@@ -1,5 +1,6 @@
 use crate::Client;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use uuid::Uuid;
 
@@ -13,14 +14,17 @@ pub struct Lease {
     key_lease_v: Arc<(String, Mutex<Uuid>)>,
     /// A local guard to avoid db contention for leases within the same client.
     local_guard: Option<OwnedMutexGuard<()>>,
+    /// How long this lease is valid for.
+    ttl_seconds: u32,
 }
 
 impl Lease {
-    pub(crate) fn new(client: Client, key: String, lease_v: Uuid) -> Self {
+    pub(crate) fn new(client: Client, key: String, lease_v: Uuid, ttl_seconds: u32) -> Self {
         let lease = Self {
             client,
             key_lease_v: Arc::new((key, Mutex::new(lease_v))),
             local_guard: None,
+            ttl_seconds,
         };
 
         start_periodicly_extending(&lease);
@@ -37,14 +41,16 @@ impl Lease {
 fn start_periodicly_extending(lease: &Lease) {
     let key_lease_v = Arc::downgrade(&lease.key_lease_v);
     let client = lease.client.clone();
+    let ttl_seconds = lease.ttl_seconds;
+    let extend_period = Duration::from_secs(ttl_seconds as u64 / 2);
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(client.extend_period).await;
+            tokio::time::sleep(extend_period).await;
             match key_lease_v.upgrade() {
                 Some(key_lease_v) => {
                     let mut lease_v = key_lease_v.1.lock().await;
                     let key = key_lease_v.0.clone();
-                    match client.extend_lease(key, *lease_v).await {
+                    match client.extend_lease(key, *lease_v, ttl_seconds).await {
                         Ok(new_lease_v) => *lease_v = new_lease_v,
                         // stop on error, TODO retries, logs?
                         Err(_) => break,
