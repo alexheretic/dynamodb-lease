@@ -117,7 +117,8 @@ impl Client {
 
     /// Put a new lease into the db.
     async fn put_lease(&self, key: String, ttl_seconds: u32) -> anyhow::Result<Option<Lease>> {
-        let expiry_timestamp = OffsetDateTime::now_utc().unix_timestamp() + i64::from(ttl_seconds);
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let expiry_timestamp = now + i64::from(ttl_seconds);
         let lease_v = Uuid::new_v4();
 
         let put = self
@@ -130,7 +131,13 @@ impl Client {
                 AttributeValue::N(expiry_timestamp.to_string()),
             )
             .item(LEASE_VERSION_FIELD, AttributeValue::S(lease_v.to_string()))
-            .condition_expression(format!("attribute_not_exists({LEASE_VERSION_FIELD})"))
+            // NOTE: We allow acquisition of leases that have expired. The
+            // expiration check does not account for clock skew. The caller
+            // should mitigate this by setting a reasonable TTL.
+            .condition_expression(format!(
+                "attribute_not_exists({LEASE_VERSION_FIELD}) or {LEASE_EXPIRY_FIELD} < :now"
+            ))
+            .expression_attribute_values(":now", AttributeValue::S(now.to_string()))
             .send()
             .await;
 
