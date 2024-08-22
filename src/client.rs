@@ -19,9 +19,10 @@ use time::OffsetDateTime;
 use tracing::instrument;
 use uuid::Uuid;
 
-const KEY_FIELD: &str = "key";
-const LEASE_EXPIRY_FIELD: &str = "lease_expiry";
-const LEASE_VERSION_FIELD: &str = "lease_version";
+// NOTE: `KEY_FIELD` and `LEASE_EXPIRY_FIELD` must match the table schema.
+const KEY_FIELD: &str = "ResourceKey";
+const LEASE_EXPIRY_FIELD: &str = "ExpiresAt";
+const LEASE_VERSION_FIELD: &str = "LeaseVersion";
 
 /// Client for acquiring [`Lease`]s.
 ///
