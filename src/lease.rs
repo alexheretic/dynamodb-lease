@@ -50,10 +50,16 @@ fn start_periodicly_extending(lease: &Lease) {
                 Some(key_lease_v) => {
                     let mut lease_v = key_lease_v.1.lock().await;
                     let key = key_lease_v.0.clone();
-                    match client.extend_lease(key, *lease_v, ttl_seconds).await {
+                    match client
+                        .extend_lease(key.clone(), *lease_v, ttl_seconds)
+                        .await
+                    {
                         Ok(new_lease_v) => *lease_v = new_lease_v,
                         // stop on error, TODO retries, logs?
-                        Err(_) => break,
+                        Err(error) => {
+                            tracing::error!(?error, "Failed to extend lease: {}", key);
+                            break;
+                        }
                     }
                 }
                 // lease dropped
@@ -79,7 +85,9 @@ impl Drop for Lease {
             let lease_v = key_lease_v.1.lock().await;
             let key = key_lease_v.0.clone();
             // TODO retries, logs?
-            let _ = client.delete_lease(key, *lease_v).await;
+            if let Err(error) = client.delete_lease(key.clone(), *lease_v).await {
+                tracing::error!(?error, "Failed to delete lease: {}", key);
+            }
         });
     }
 }
