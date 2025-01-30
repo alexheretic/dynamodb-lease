@@ -45,7 +45,7 @@ impl Client {
         <_>::default()
     }
 
-    /// Trys to acquire a new [`Lease`] for the given `key`.
+    /// Tries to acquire a new [`Lease`] for the given `key`.
     ///
     /// If this lease has already been acquired elsewhere `Ok(None)` is returned.
     ///
