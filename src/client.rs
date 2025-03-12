@@ -1,5 +1,5 @@
-use crate::{local::LocalLocks, ClientBuilder, Lease};
-use anyhow::{bail, ensure, Context};
+use crate::{ClientBuilder, Lease, local::LocalLocks};
+use anyhow::{Context, bail, ensure};
 use aws_sdk_dynamodb::{
     error::SdkError,
     operation::{
