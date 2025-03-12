@@ -25,7 +25,7 @@ impl Lease {
             is_dropped: false,
         };
 
-        start_periodicly_extending(&lease);
+        start_periodically_extending(&lease);
 
         lease
     }
@@ -59,7 +59,7 @@ impl Lease {
     }
 }
 
-fn start_periodicly_extending(lease: &Lease) {
+fn start_periodically_extending(lease: &Lease) {
     let key_lease_v = Arc::downgrade(&lease.key_lease_v);
     let client = lease.client.clone();
     tokio::spawn(async move {
