@@ -41,11 +41,11 @@ impl Lease {
     /// This avoids other concurrent acquires in the same process being unfairly
     /// advantaged in acquiring subsequent leases and potentially causing other
     /// processes to be starved.
-    /// 
+    ///
     /// If you await this method then immediately acquire a lease,
     /// e.g. inside a loop, you are acquiring with an unfair advantage vs other process
     /// attempts. This may lead to other process being starved of leases.
-    pub async fn release(mut self) {
+    pub async fn release(mut self) -> anyhow::Result<()> {
         let client = self.client.clone();
         let key_lease_v = self.key_lease_v.clone();
 
@@ -54,8 +54,8 @@ impl Lease {
 
         let lease_v = key_lease_v.1.lock().await;
         let key = key_lease_v.0.clone();
-        // TODO retries, logs?
-        let _ = client.delete_lease(key, *lease_v).await;
+        client.delete_lease(key, *lease_v).await?;
+        Ok(())
     }
 }
 
@@ -97,7 +97,7 @@ impl Drop for Lease {
             is_dropped: self.is_dropped,
         };
         tokio::spawn(async move {
-            lease.release().await;
+            let _ = lease.release().await;
         });
     }
 }
