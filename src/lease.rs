@@ -36,13 +36,19 @@ impl Lease {
     }
 
     /// Asynchronously releases the underlying lock.
+    ///
+    /// Note: The local guard is unlocked **first** before deleting the lease.
+    /// This avoids other concurrent acquires in the same process being unfairly
+    /// advantaged in acquiring subsequent leases and potentially causing other
+    /// processes to be starved.
+    /// 
+    /// If you await this method then immediately acquire a lease,
+    /// e.g. inside a loop, you are acquiring with an unfair advantage vs other process
+    /// attempts. This may lead to other process being starved of leases.
     pub async fn release(mut self) {
         let client = self.client.clone();
         let key_lease_v = self.key_lease_v.clone();
 
-        // Drop local guard *before* deleting lease to avoid unfair local acquire advantage.
-        // Dropping the local_guard after deleting would be more efficient however during
-        // contention that efficiency could starve remote attempts to acquire the lease.
         drop(self.local_guard.take());
         client.try_clean_local_lock(key_lease_v.0.clone());
 
