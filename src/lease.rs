@@ -36,7 +36,7 @@ impl Lease {
     }
 
     /// Asynchronously releases the underlying lock.
-    pub async fn release(&mut self) {
+    pub async fn release(mut self) {
         let client = self.client.clone();
         let key_lease_v = self.key_lease_v.clone();
 
@@ -84,7 +84,7 @@ impl Drop for Lease {
         }
         self.is_dropped = true;
         // Clone necessary data before moving self into the spawned task
-        let mut lease = Lease {
+        let lease = Lease {
             client: self.client.clone(),
             key_lease_v: self.key_lease_v.clone(),
             local_guard: self.local_guard.take(), // Take ownership of the guard
