@@ -13,7 +13,7 @@ pub struct Lease {
     key_lease_v: Arc<(String, Mutex<Uuid>)>,
     /// A local guard to avoid db contention for leases within the same client.
     local_guard: Option<OwnedMutexGuard<()>>,
-    is_dropped: bool,
+    release_on_drop: bool,
 }
 
 impl Lease {
@@ -22,7 +22,7 @@ impl Lease {
             client,
             key_lease_v: Arc::new((key, Mutex::new(lease_v))),
             local_guard: None,
-            is_dropped: false,
+            release_on_drop: true,
         };
 
         start_periodically_extending(&lease);
@@ -46,15 +46,16 @@ impl Lease {
     /// e.g. inside a loop, you are acquiring with an unfair advantage vs other process
     /// attempts. This may lead to other process being starved of leases.
     pub async fn release(mut self) -> anyhow::Result<()> {
-        let client = self.client.clone();
-        let key_lease_v = self.key_lease_v.clone();
+        // disable release on drop since we're doing that now
+        self.release_on_drop = false;
+
+        let (key, lease_v) = &*self.key_lease_v;
 
         drop(self.local_guard.take());
-        client.try_clean_local_lock(key_lease_v.0.clone());
+        self.client.try_clean_local_lock(key.clone());
 
-        let lease_v = key_lease_v.1.lock().await;
-        let key = key_lease_v.0.clone();
-        client.delete_lease(key, *lease_v).await?;
+        let lease_v = *lease_v.lock().await;
+        self.client.delete_lease(key.clone(), lease_v).await?;
         Ok(())
     }
 }
@@ -85,20 +86,18 @@ fn start_periodically_extending(lease: &Lease) {
 impl Drop for Lease {
     /// Asynchronously releases the underlying lock.
     fn drop(&mut self) {
-        if self.is_dropped {
-            return;
+        if self.release_on_drop {
+            // Clone necessary data before moving self into the spawned task
+            let lease = Lease {
+                client: self.client.clone(),
+                key_lease_v: Arc::clone(&self.key_lease_v),
+                local_guard: self.local_guard.take(), // Take ownership of the guard
+                release_on_drop: false,
+            };
+            tokio::spawn(async move {
+                // TODO retries, logs?
+                _ = lease.release().await;
+            });
         }
-        self.is_dropped = true;
-        // Clone necessary data before moving self into the spawned task
-        let lease = Lease {
-            client: self.client.clone(),
-            key_lease_v: self.key_lease_v.clone(),
-            local_guard: self.local_guard.take(), // Take ownership of the guard
-            is_dropped: self.is_dropped,
-        };
-        tokio::spawn(async move {
-            // TODO retries, logs?
-            _ = lease.release().await;
-        });
     }
 }
