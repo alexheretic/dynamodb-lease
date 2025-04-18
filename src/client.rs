@@ -227,7 +227,10 @@ impl Client {
                         }
                         None => {
                             // Version missing: Check expiry (no grace) and delete based on expiry
-                            tracing::warn!(key = key, "Lease item missing '{LEASE_VERSION_FIELD}' field, attempting expiry-based replacement (backward compatibility)");
+                            tracing::warn!(
+                                key = key,
+                                "Lease item missing '{LEASE_VERSION_FIELD}' field, attempting expiry-based replacement (backward compatibility)"
+                            );
                             if now_ts >= expiry_ts {
                                 // Lease is expired (no grace period applied), try conditional delete on expiry
                                 let delete_result = self
