@@ -35,7 +35,7 @@ impl Lease {
         self
     }
 
-    /// Asynchronously releases the underlying lock.
+    /// Releases the lease returning `Ok(())` after successful deletion.
     ///
     /// Note: The local guard is unlocked **first** before deleting the lease.
     /// This avoids other concurrent acquires in the same process being unfairly
