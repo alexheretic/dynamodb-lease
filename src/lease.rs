@@ -54,8 +54,9 @@ impl Lease {
         drop(self.local_guard.take());
         self.client.try_clean_local_lock(key.clone());
 
-        let lease_v = *lease_v.lock().await;
-        self.client.delete_lease(key.clone(), lease_v).await?;
+        let lease_v = lease_v.lock().await;
+        self.client.delete_lease(key.clone(), *lease_v).await?;
+        drop(lease_v); // hold v-lock during deletion to ensure no race with `extend_lease`
         Ok(())
     }
 }
