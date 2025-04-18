@@ -1,3 +1,6 @@
+## Unreleased (0.22.1)
+* Add `Lease::release` fn.
+
 ## 0.22.0
 * Update _aws-sdk-dynamodb_ to `1.1`.
 
