@@ -1,12 +1,14 @@
 use crate::Client;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 /// [`Client`] builder.
+#[derive(Debug)]
 pub struct ClientBuilder {
     table_name: String,
     lease_ttl_seconds: u32,
     extend_period: Option<Duration>,
     acquire_cooldown: Duration,
+    grace_period: Duration,
 }
 
 impl Default for ClientBuilder {
@@ -16,6 +18,7 @@ impl Default for ClientBuilder {
             lease_ttl_seconds: 60,
             extend_period: None,
             acquire_cooldown: Duration::from_secs(1),
+            grace_period: Duration::from_secs(60), // Default grace period
         }
     }
 }
@@ -85,6 +88,43 @@ impl ClientBuilder {
         self
     }
 
+    /// Sets the grace period after a lease expires before it can be forcefully acquired
+    /// by [`Client::acquire_or_replace_expired_lease`].
+    ///
+    /// This gives the original lease holder extra time to renew the lease if they were
+    /// slightly delayed.
+    ///
+    /// Default `60s`.
+    pub fn grace_period(mut self, grace_period: Duration) -> Self {
+        self.grace_period = grace_period;
+        self
+    }
+
+    /// Builds a [`Client`].
+    /// Does not check if the table exists or has the correct schema, see [`ClientBuilder::build_and_check_db`].
+    ///
+    /// # Panics
+    /// Panics if `extend_period` is not less than `lease_ttl_seconds`.
+    pub fn build(self, dynamodb_client: aws_sdk_dynamodb::Client) -> Client {
+        let extend_period = self
+            .extend_period
+            .unwrap_or_else(|| Duration::from_secs_f64(self.lease_ttl_seconds as f64 / 2.0));
+        assert!(
+            extend_period < Duration::from_secs(self.lease_ttl_seconds as _),
+            "extend_period must be less than ttl"
+        );
+
+        Client {
+            table_name: Arc::new(self.table_name),
+            client: dynamodb_client,
+            lease_ttl_seconds: self.lease_ttl_seconds,
+            extend_period,
+            acquire_cooldown: self.acquire_cooldown,
+            grace_period: self.grace_period, // Pass grace period
+            local_locks: <_>::default(),
+        }
+    }
+
     /// Builds a [`Client`] and checks the dynamodb table is active with the correct schema.
     ///
     /// # Panics
@@ -93,25 +133,8 @@ impl ClientBuilder {
         self,
         dynamodb_client: aws_sdk_dynamodb::Client,
     ) -> anyhow::Result<Client> {
-        let extend_period = self
-            .extend_period
-            .unwrap_or_else(|| Duration::from_secs_f64(self.lease_ttl_seconds as f64 / 2.0));
-        assert!(
-            extend_period < Duration::from_secs(self.lease_ttl_seconds as _),
-            "renew_period must be less than ttl"
-        );
-
-        let client = Client {
-            table_name: self.table_name.into(),
-            client: dynamodb_client,
-            lease_ttl_seconds: self.lease_ttl_seconds,
-            extend_period,
-            acquire_cooldown: self.acquire_cooldown,
-            local_locks: <_>::default(),
-        };
-
+        let client = self.build(dynamodb_client);
         client.check_schema().await?;
-
         Ok(client)
     }
 }

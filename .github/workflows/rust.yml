@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -12,20 +12,13 @@ jobs:
     env:
       RUST_BACKTRACE: 1
     steps:
-    - run: rustup update stable
-    - uses: actions/checkout@v4
-    - name: Setup dynamodb-local
-      uses: rrainn/dynamodb-action@v2.0.1
-      with:
-        port: 8000
-        cors: '*'
-    - run: mkdir ~/.aws && echo -e "[default]\nregion = eu-west-1" > ~/.aws/config
-    - run: echo -e "[default]\naws_access_key_id=12341234\naws_secret_access_key=12341234" > ~/.aws/credentials
-    - run: cargo test
+      - run: rustup update stable
+      - uses: actions/checkout@v4
+      - run: cargo test
 
   rustfmt:
     runs-on: ubuntu-latest
     steps:
-    - run: rustup update stable
-    - uses: actions/checkout@v4
-    - run: cargo fmt -- --check
+      - run: rustup update stable
+      - uses: actions/checkout@v4
+      - run: cargo fmt -- --check
