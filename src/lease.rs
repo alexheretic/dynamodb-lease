@@ -97,7 +97,8 @@ impl Drop for Lease {
             is_dropped: self.is_dropped,
         };
         tokio::spawn(async move {
-            let _ = lease.release().await;
+            // TODO retries, logs?
+            _ = lease.release().await;
         });
     }
 }
