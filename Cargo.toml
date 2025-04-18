@@ -11,7 +11,9 @@ readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.57"
-aws-sdk-dynamodb = { version = "1.1", default-features = false, features = ["rt-tokio"] }
+aws-sdk-dynamodb = { version = "1.1", default-features = false, features = [
+    "rt-tokio",
+] }
 aws-smithy-runtime-api = "1.0.1"
 time = "0.3.9"
 tokio = { version = "1.18", features = ["macros"] }
@@ -20,6 +22,8 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 aws-config = "1"
+testcontainers-modules = { version = "0.11.6", features = ["dynamodb"] }
+tokio = { version = "1", features = ["sync"] }
 
 [features]
 default = ["rustls"]

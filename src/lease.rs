@@ -59,6 +59,12 @@ impl Lease {
         drop(lease_v); // hold v-lock during deletion to ensure no race with `extend_lease`
         Ok(())
     }
+
+    /// Get the unique UUID identifier for this lease instance.
+    /// This UUID changes each time the lease is successfully extended.
+    pub async fn lease_v(&self) -> Uuid {
+        *self.key_lease_v.1.lock().await
+    }
 }
 
 fn start_periodically_extending(lease: &Lease) {

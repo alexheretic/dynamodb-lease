@@ -10,20 +10,42 @@ use aws_sdk_dynamodb::{
     },
 };
 use std::time::Duration;
+use testcontainers_modules::testcontainers::{ContainerAsync, core::IntoContainerPort};
+use testcontainers_modules::{dynamodb_local::DynamoDb, testcontainers::runners::AsyncRunner};
 
 /// Test wait timeout, generally long enough that something has probably gone wrong.
 pub const TEST_WAIT: Duration = Duration::from_secs(4);
 
-/// Config for localhost dynamodb.
-pub async fn localhost_dynamodb() -> aws_sdk_dynamodb::Client {
+/// Gets the test dynamodb client and container handle, initializing it on first call.
+pub async fn get_test_db() -> (aws_sdk_dynamodb::Client, ContainerAsync<DynamoDb>) {
+    let instance = DynamoDb::default()
+        .start()
+        .await
+        .expect("failed to start dynamodb local container");
+
+    let host = instance.get_host().await.expect("failed to get host");
+    let host_port = instance
+        .get_host_port_ipv4(8000.tcp())
+        .await
+        .expect("failed to get host port");
+
     let conf = aws_config::defaults(BehaviorVersion::latest())
         .region("eu-west-1")
+        .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+            "AKIA6666666666666666",
+            "6666666666666666666666666666666666666666",
+            None,
+            None,
+            "test",
+        ))
         .load()
         .await;
     let conf = aws_sdk_dynamodb::config::Builder::from(&conf)
-        .endpoint_url("http://localhost:8000")
+        .endpoint_url(format!("http://{}:{}", host, host_port))
         .build();
-    aws_sdk_dynamodb::Client::from_conf(conf)
+    let client = aws_sdk_dynamodb::Client::from_conf(conf);
+
+    (client, instance)
 }
 
 /// Create the table, with "key" as a hash key, if it doesn't exist.
@@ -58,7 +80,7 @@ pub async fn create_lease_table(table_name: &str, client: &aws_sdk_dynamodb::Cli
         }
         Err(e) => Err(e),
     }
-    .expect("dynamodb create_table failed: Did you run scripts/init-test.sh ?");
+    .expect("dynamodb create_table failed");
 
     let ttl_update = client
         .update_time_to_live()
