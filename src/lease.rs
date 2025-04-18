@@ -13,6 +13,7 @@ pub struct Lease {
     key_lease_v: Arc<(String, Mutex<Uuid>)>,
     /// A local guard to avoid db contention for leases within the same client.
     local_guard: Option<OwnedMutexGuard<()>>,
+    is_dropped: bool,
 }
 
 impl Lease {
@@ -21,6 +22,7 @@ impl Lease {
             client,
             key_lease_v: Arc::new((key, Mutex::new(lease_v))),
             local_guard: None,
+            is_dropped: false,
         };
 
         start_periodicly_extending(&lease);
@@ -31,6 +33,29 @@ impl Lease {
     pub(crate) fn with_local_guard(mut self, guard: OwnedMutexGuard<()>) -> Self {
         self.local_guard = Some(guard);
         self
+    }
+
+    /// Releases the lease returning `Ok(())` after successful deletion.
+    ///
+    /// Note: The local guard is unlocked **first** before deleting the lease.
+    /// This avoids other concurrent acquires in the same process being unfairly
+    /// advantaged in acquiring subsequent leases and potentially causing other
+    /// processes to be starved.
+    ///
+    /// If you await this method then immediately acquire a lease,
+    /// e.g. inside a loop, you are acquiring with an unfair advantage vs other process
+    /// attempts. This may lead to other process being starved of leases.
+    pub async fn release(mut self) -> anyhow::Result<()> {
+        let client = self.client.clone();
+        let key_lease_v = self.key_lease_v.clone();
+
+        drop(self.local_guard.take());
+        client.try_clean_local_lock(key_lease_v.0.clone());
+
+        let lease_v = key_lease_v.1.lock().await;
+        let key = key_lease_v.0.clone();
+        client.delete_lease(key, *lease_v).await?;
+        Ok(())
     }
 }
 
@@ -60,20 +85,19 @@ fn start_periodicly_extending(lease: &Lease) {
 impl Drop for Lease {
     /// Asynchronously releases the underlying lock.
     fn drop(&mut self) {
-        let client = self.client.clone();
-        let key_lease_v = self.key_lease_v.clone();
-
-        // Drop local guard *before* deleting lease to avoid unfair local acquire advantage.
-        // Dropping the local_guard after deleting would be more efficient however during
-        // contention that efficiency could starve remote attempts to acquire the lease.
-        drop(self.local_guard.take());
-        client.try_clean_local_lock(key_lease_v.0.clone());
-
+        if self.is_dropped {
+            return;
+        }
+        self.is_dropped = true;
+        // Clone necessary data before moving self into the spawned task
+        let lease = Lease {
+            client: self.client.clone(),
+            key_lease_v: self.key_lease_v.clone(),
+            local_guard: self.local_guard.take(), // Take ownership of the guard
+            is_dropped: self.is_dropped,
+        };
         tokio::spawn(async move {
-            let lease_v = key_lease_v.1.lock().await;
-            let key = key_lease_v.0.clone();
-            // TODO retries, logs?
-            let _ = client.delete_lease(key, *lease_v).await;
+            let _ = lease.release().await;
         });
     }
 }
