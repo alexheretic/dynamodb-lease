@@ -8,7 +8,6 @@ pub struct ClientBuilder {
     lease_ttl_seconds: u32,
     extend_period: Option<Duration>,
     acquire_cooldown: Duration,
-    grace_period: Duration,
 }
 
 impl Default for ClientBuilder {
@@ -18,7 +17,6 @@ impl Default for ClientBuilder {
             lease_ttl_seconds: 60,
             extend_period: None,
             acquire_cooldown: Duration::from_secs(1),
-            grace_period: Duration::from_secs(60), // Default grace period
         }
     }
 }
@@ -88,18 +86,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the grace period after a lease expires before it can be forcefully acquired
-    /// by [`Client::acquire_or_replace_expired_lease`].
-    ///
-    /// This gives the original lease holder extra time to renew the lease if they were
-    /// slightly delayed.
-    ///
-    /// Default `60s`.
-    pub fn grace_period(mut self, grace_period: Duration) -> Self {
-        self.grace_period = grace_period;
-        self
-    }
-
     /// Builds a [`Client`].
     /// Does not check if the table exists or has the correct schema, see [`ClientBuilder::build_and_check_db`].
     ///
@@ -120,7 +106,6 @@ impl ClientBuilder {
             lease_ttl_seconds: self.lease_ttl_seconds,
             extend_period,
             acquire_cooldown: self.acquire_cooldown,
-            grace_period: self.grace_period, // Pass grace period
             local_locks: <_>::default(),
         }
     }

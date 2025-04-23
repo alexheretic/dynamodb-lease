@@ -36,7 +36,6 @@ pub struct Client {
     pub(crate) lease_ttl_seconds: u32,
     pub(crate) extend_period: Duration,
     pub(crate) acquire_cooldown: Duration,
-    pub(crate) grace_period: Duration,
     pub(crate) local_locks: LocalLocks,
 }
 
@@ -49,6 +48,9 @@ impl Client {
     /// Tries to acquire a new [`Lease`] for the given `key`.
     ///
     /// If this lease has already been acquired elsewhere `Ok(None)` is returned.
+    ///
+    /// If a lease exists but has expired, it will be replaced and `Ok(Some(lease))` returned.
+    /// If an active (non-expired) lease exists elsewhere, `Ok(None)` is returned.
     ///
     /// Does not wait to acquire a lease, to do so see [`Client::acquire`].
     #[instrument(skip_all)]
@@ -68,6 +70,10 @@ impl Client {
     /// Acquires a new [`Lease`] for the given `key`. May wait until successful if the lease
     /// has already been acquired elsewhere.
     ///
+    /// If a lease exists but has expired, it will be replaced immediately without waiting.
+    /// If an active (non-expired) lease exists elsewhere, this method will wait until that
+    /// lease expires or is released.
+    ///
     /// To try to acquire without waiting see [`Client::try_acquire`].
     #[instrument(skip_all)]
     pub async fn acquire(&self, key: impl Into<String>) -> anyhow::Result<Lease> {
@@ -84,6 +90,10 @@ impl Client {
 
     /// Acquires a new [`Lease`] for the given `key`. May wait until successful if the lease
     /// has already been acquired elsewhere up to a max of `max_wait`.
+    ///
+    /// If a lease exists but has expired, it will be replaced immediately without waiting.
+    /// If an active (non-expired) lease exists elsewhere, this method will wait up to
+    /// `max_wait` for that lease expires or is released.
     ///
     /// To try to acquire without waiting see [`Client::try_acquire`].
     #[instrument(skip_all)]
@@ -112,165 +122,10 @@ impl Client {
         }
     }
 
-    /// Acquires a new [`Lease`] for the given `key`. If an expired lease exists for the key,
-    /// it attempts to remove it before acquiring. May wait until successful if the lease
-    /// is actively held elsewhere.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use dynamodb_lease::Client;
-    /// # use std::time::Duration;
-    /// # async fn example() -> anyhow::Result<()> {
-    /// #     // Assume db_client is an initialized aws_sdk_dynamodb::Client
-    /// #     let db_client: aws_sdk_dynamodb::Client = unimplemented!();
-    /// #     let client = Client::builder()
-    /// #         .table_name("my-lease-table") // Specify your table name
-    /// #         .build_and_check_db(db_client)
-    /// #         .await?;
-    /// // Acquire a lease, potentially cleaning up an old expired one first.
-    /// let lease = client.acquire_or_replace_expired_lease("my-unique-key").await?;
-    /// println!("Acquired lease: {:?}", lease);
-    /// // Lease is automatically released when `lease` goes out of scope.
-    /// #     Ok(())
-    /// # }
-    /// ```
-    #[instrument(skip_all)]
-    pub async fn acquire_or_replace_expired_lease(
-        &self,
-        key: impl Into<String>,
-    ) -> anyhow::Result<Lease> {
-        let key = key.into();
-        let local_guard = self.local_locks.lock(key.clone()).await;
-
-        loop {
-            match self.try_acquire_or_replace_expired(&key).await {
-                Ok(Some(lease)) => return Ok(lease.with_local_guard(local_guard)),
-                Ok(None) => { /* Lease held or failed conditional delete, retry */ }
-                Err(e) => return Err(e), // Propagate other errors
-            }
-            tokio::time::sleep(self.acquire_cooldown).await;
-        }
-    }
-
-    // Internal helper to attempt acquiring or replacing an expired lease once.
-    //
-    // 1. Gets the item.
-    // 2. If it exists and is expired, attempts a conditional delete.
-    // 3. If delete succeeds or item didn't exist, attempts a conditional put.
-    // Returns Ok(Some(Lease)) on successful acquisition.
-    // Returns Ok(None) if the lease is currently held by another owner or if a
-    // conditional delete/put fails (indicating a concurrent modification), suggesting a retry.
-    // Returns Err(_) for other failures.
-    async fn try_acquire_or_replace_expired(&self, key: &str) -> anyhow::Result<Option<Lease>> {
-        let now_ts = OffsetDateTime::now_utc().unix_timestamp();
-        let grace_period_secs = self.grace_period.as_secs();
-
-        // 1. Get Item
-        let get_output = self
-            .client
-            .get_item()
-            .table_name(self.table_name.as_str())
-            .key(KEY_FIELD, AttributeValue::S(key.to_string()))
-            .consistent_read(true) // Ensure we read the latest state
-            .send()
-            .await;
-
-        match get_output {
-            Ok(output) => {
-                if let Some(item) = output.item {
-                    // Item exists, check expiry
-                    let expiry_val = item
-                        .get(LEASE_EXPIRY_FIELD)
-                        .context("Missing lease_expiry field")?;
-                    let maybe_version_val = item.get(LEASE_VERSION_FIELD);
-
-                    let expiry_ts = expiry_val
-                        .as_n()
-                        .map_err(|_| anyhow::anyhow!("lease_expiry is not a number"))?
-                        .parse::<i64>()
-                        .context("Failed to parse lease_expiry")?;
-
-                    match maybe_version_val {
-                        Some(version_val) => {
-                            // Version exists: Check expiry + grace period and delete based on version
-                            let version_str = version_val
-                                .as_s()
-                                .map_err(|_| anyhow::anyhow!("lease_version is not a string"))?;
-
-                            let expiry_with_grace = expiry_ts.saturating_add(
-                                i64::try_from(grace_period_secs).unwrap_or(i64::MAX),
-                            );
-
-                            if now_ts >= expiry_with_grace {
-                                // Lease is expired beyond the grace period, try conditional delete on version
-                                let delete_result = self
-                                    .client
-                                    .delete_item()
-                                    .table_name(self.table_name.as_str())
-                                    .key(KEY_FIELD, AttributeValue::S(key.to_string()))
-                                    .condition_expression(format!(
-                                        "{LEASE_VERSION_FIELD} = :version"
-                                    ))
-                                    .expression_attribute_values(
-                                        ":version",
-                                        AttributeValue::S(version_str.to_string()),
-                                    )
-                                    .send()
-                                    .await;
-                                // Handle delete result (success -> put_lease, conditional fail -> Ok(None), error -> Err)
-                                handle_delete_result(delete_result, self, key).await
-                            } else {
-                                // Lease exists but is not expired OR is within the grace period
-                                Ok(None)
-                            }
-                        }
-                        None => {
-                            // Version missing: Check expiry (no grace) and delete based on expiry
-                            tracing::warn!(
-                                key = key,
-                                "Lease item missing '{LEASE_VERSION_FIELD}' field, attempting expiry-based replacement (backward compatibility)"
-                            );
-                            if now_ts >= expiry_ts {
-                                // Lease is expired (no grace period applied), try conditional delete on expiry
-                                let delete_result = self
-                                    .client
-                                    .delete_item()
-                                    .table_name(self.table_name.as_str())
-                                    .key(KEY_FIELD, AttributeValue::S(key.to_string()))
-                                    .condition_expression("attribute_exists(#k) AND #e = :expiry")
-                                    .expression_attribute_names("#k", KEY_FIELD)
-                                    .expression_attribute_names("#e", LEASE_EXPIRY_FIELD)
-                                    .expression_attribute_values(
-                                        ":expiry",
-                                        expiry_val.clone(), // Use the original AttributeValue
-                                    )
-                                    .send()
-                                    .await;
-                                // Handle delete result (success -> put_lease, conditional fail -> Ok(None), error -> Err)
-                                handle_delete_result(delete_result, self, key).await
-                            } else {
-                                // Lease exists (without version) but is not yet expired
-                                Ok(None)
-                            }
-                        }
-                    }
-                } else {
-                    // Item does not exist, try to put it
-                    self.put_lease(key.to_string()).await
-                }
-            }
-            Err(SdkError::ServiceError(se)) => {
-                Err(anyhow::Error::from(se.into_err()).context("Failed to get lease item"))
-            }
-            Err(e) => Err(anyhow::Error::from(e).context("Failed to get lease item")),
-        }
-    }
-
     /// Put a new lease into the db.
     async fn put_lease(&self, key: String) -> anyhow::Result<Option<Lease>> {
-        let expiry_timestamp =
-            OffsetDateTime::now_utc().unix_timestamp() + i64::from(self.lease_ttl_seconds);
+        let now_ts = OffsetDateTime::now_utc().unix_timestamp();
+        let expiry_timestamp = now_ts + i64::from(self.lease_ttl_seconds);
         let lease_v = Uuid::new_v4();
 
         let put = self
@@ -283,7 +138,10 @@ impl Client {
                 AttributeValue::N(expiry_timestamp.to_string()),
             )
             .item(LEASE_VERSION_FIELD, AttributeValue::S(lease_v.to_string()))
-            .condition_expression(format!("attribute_not_exists({LEASE_VERSION_FIELD})"))
+            .condition_expression("attribute_not_exists(#k) OR #le < :now")
+            .expression_attribute_names("#k", KEY_FIELD)
+            .expression_attribute_names("#le", LEASE_EXPIRY_FIELD)
+            .expression_attribute_values(":now", AttributeValue::N(now_ts.to_string()))
             .send()
             .await;
 
@@ -425,31 +283,6 @@ impl Client {
         );
 
         Ok(())
-    }
-}
-
-// Helper function to handle delete result logic (DRY)
-async fn handle_delete_result(
-    delete_result: Result<DeleteItemOutput, SdkError<DeleteItemError, orchestrator::HttpResponse>>,
-    client: &Client,
-    key: &str,
-) -> anyhow::Result<Option<Lease>> {
-    match delete_result {
-        Ok(_) => {
-            // Successfully deleted expired lease, now try to put the new one
-            client.put_lease(key.to_string()).await
-        }
-        Err(SdkError::ServiceError(se))
-            if matches!(
-                se.err(),
-                DeleteItemError::ConditionalCheckFailedException(..)
-            ) =>
-        {
-            // Conditional check failed - someone else modified/deleted it first.
-            // Return None to signal retry in the calling loop.
-            Ok(None)
-        }
-        Err(e) => Err(anyhow::Error::from(e).context("Failed conditional delete of expired lease")),
     }
 }
 
