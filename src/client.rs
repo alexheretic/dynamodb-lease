@@ -50,7 +50,6 @@ impl Client {
     /// If this lease has already been acquired elsewhere `Ok(None)` is returned.
     ///
     /// If a lease exists but has expired, it will be replaced and `Ok(Some(lease))` returned.
-    /// If an active (non-expired) lease exists elsewhere, `Ok(None)` is returned.
     ///
     /// Does not wait to acquire a lease, to do so see [`Client::acquire`].
     #[instrument(skip_all)]
