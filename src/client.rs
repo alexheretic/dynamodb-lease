@@ -113,8 +113,8 @@ impl Client {
 
     /// Put a new lease into the db.
     async fn put_lease(&self, key: String) -> anyhow::Result<Option<Lease>> {
-        let expiry_timestamp =
-            OffsetDateTime::now_utc().unix_timestamp() + i64::from(self.lease_ttl_seconds);
+        let now_timestamp = OffsetDateTime::now_utc().unix_timestamp();
+        let expiry_timestamp = now_timestamp + i64::from(self.lease_ttl_seconds);
         let lease_v = Uuid::new_v4();
 
         let put = self
@@ -127,7 +127,10 @@ impl Client {
                 AttributeValue::N(expiry_timestamp.to_string()),
             )
             .item(LEASE_VERSION_FIELD, AttributeValue::S(lease_v.to_string()))
-            .condition_expression(format!("attribute_not_exists({LEASE_VERSION_FIELD})"))
+            .condition_expression(format!(
+                "attribute_not_exists({LEASE_VERSION_FIELD}) OR {LEASE_EXPIRY_FIELD} < :now"
+            ))
+            .expression_attribute_values(":now", AttributeValue::N(now_timestamp.to_string()))
             .send()
             .await;
 

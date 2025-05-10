@@ -2,9 +2,11 @@ mod util;
 
 use anyhow::Context;
 use aws_sdk_dynamodb::types::{
-    AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
+    AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType,
+    ScalarAttributeType, TimeToLiveSpecification,
 };
 use std::time::Duration;
+use time::OffsetDateTime;
 use util::*;
 use uuid::Uuid;
 
@@ -277,6 +279,96 @@ async fn acquire_timeout() {
         .acquire_timeout(&lease_key, TEST_WAIT)
         .await
         .expect("failed to acquire");
+}
+
+/// Acquiring should work if an expired lease already exists. This could be
+/// caused by a lease holder crashing or losing connection to the db.
+#[tokio::test]
+async fn acquire_expired_lease() {
+    const KEY_FIELD: &str = "key";
+    const LEASE_EXPIRY_FIELD: &str = "lease_expiry";
+    const LEASE_VERSION_FIELD: &str = "lease_version";
+    const LEASE_TABLE: &str = "test-acquire-expired-lease";
+
+    let db_client = localhost_dynamodb().await;
+    create_lease_table(LEASE_TABLE, &db_client).await;
+
+    let client = dynamodb_lease::Client::builder()
+        .table_name(LEASE_TABLE)
+        .build_and_check_db(db_client.clone())
+        .await
+        .unwrap();
+
+    // disable ttl to ensure local test dynamodb does **not** actually reap the outdated record
+    // to simulate documented behaviour
+    // > DynamoDB automatically deletes expired items within a few days of their expiration time
+    // <https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html>
+    db_client
+        .update_time_to_live()
+        .table_name(LEASE_TABLE)
+        .time_to_live_specification(
+            TimeToLiveSpecification::builder()
+                .enabled(false)
+                .attribute_name("lease_expiry")
+                .build()
+                .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    let lease_key = format!("acquire_expired_lease:{}", Uuid::new_v4());
+
+    // manually create an expired lease record to simulate this state
+    let expired_lease_v = Uuid::new_v4();
+    let before_timestamp = OffsetDateTime::now_utc().unix_timestamp();
+    db_client
+        .put_item()
+        .table_name(LEASE_TABLE)
+        .item(KEY_FIELD, AttributeValue::S(lease_key.clone()))
+        .item(
+            LEASE_EXPIRY_FIELD,
+            AttributeValue::N((before_timestamp - 1).to_string()),
+        )
+        .item(
+            LEASE_VERSION_FIELD,
+            AttributeValue::S(expired_lease_v.to_string()),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // acquiring a lease should work immediately, overwriting the expired lease
+    let _lease = client
+        .try_acquire(&lease_key)
+        .await
+        .expect("Could not acquire")
+        .expect("try_acquire returned None");
+
+    // check db lease is correct
+    let get = db_client
+        .get_item()
+        .table_name(LEASE_TABLE)
+        .key(KEY_FIELD, AttributeValue::S(lease_key.clone()))
+        .send()
+        .await
+        .unwrap();
+    let rec = get.item().unwrap();
+    // the lease expiry should no longer be expired
+    let rec_expiry = rec[LEASE_EXPIRY_FIELD]
+        .as_n()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    assert!(rec_expiry > before_timestamp, "Unexpected record {rec:?}");
+
+    // the lease version should have changed from the expired one
+    let rec_lease_v = rec[LEASE_VERSION_FIELD].as_s().unwrap();
+    assert_ne!(
+        rec_lease_v,
+        &expired_lease_v.to_string(),
+        "Unexpected record {rec:?}"
+    );
 }
 
 #[tokio::test]
