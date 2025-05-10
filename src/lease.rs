@@ -10,6 +10,8 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct Lease {
     client: Client,
+    /// Note: The extension tasks holds an **exclusive** weak references to
+    /// this (that exclusivity is used to indicate that the task is still alive).
     key_lease_v: Arc<(String, Mutex<Uuid>)>,
     /// A local guard to avoid db contention for leases within the same client.
     local_guard: Option<OwnedMutexGuard<()>>,
@@ -59,20 +61,36 @@ impl Lease {
         drop(lease_v); // hold v-lock during deletion to ensure no race with `extend_lease`
         Ok(())
     }
+
+    /// Returns `true` if the lease periodic extension task is still running.
+    ///
+    /// If lease extension fails, e.g. due to lost contact with the db, this
+    /// will return `false`.
+    pub fn is_healthy(&self) -> bool {
+        // The `start_periodically_extending` task holds an exclusive weak ref
+        // to this field, so if the weak count is zero we know this task has died.
+        Arc::weak_count(&self.key_lease_v) != 0
+    }
 }
 
 fn start_periodically_extending(lease: &Lease) {
     let key_lease_v = Arc::downgrade(&lease.key_lease_v);
     let client = lease.client.clone();
     tokio::spawn(async move {
+        let mut extend_interval = tokio::time::interval(client.extend_period);
+        extend_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        extend_interval.reset();
         loop {
-            tokio::time::sleep(client.extend_period).await;
+            extend_interval.tick().await;
+
             match key_lease_v.upgrade() {
                 Some(key_lease_v) => {
                     let mut lease_v = key_lease_v.1.lock().await;
                     let key = key_lease_v.0.clone();
                     match client.extend_lease(key, *lease_v).await {
-                        Ok(new_lease_v) => *lease_v = new_lease_v,
+                        Ok(new_lease_v) => {
+                            *lease_v = new_lease_v;
+                        }
                         // stop on error, TODO retries, logs?
                         Err(_) => break,
                     }

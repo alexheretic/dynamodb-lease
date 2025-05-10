@@ -7,6 +7,7 @@ use aws_sdk_dynamodb::types::{
 };
 use std::time::Duration;
 use time::OffsetDateTime;
+use tokio::time::Instant;
 use util::*;
 use uuid::Uuid;
 
@@ -369,6 +370,48 @@ async fn acquire_expired_lease() {
         &expired_lease_v.to_string(),
         "Unexpected record {rec:?}"
     );
+}
+
+#[tokio::test]
+async fn is_healthy() {
+    const LEASE_TABLE: &str = "test-is-healthy";
+
+    let db_client = localhost_dynamodb().await;
+    create_lease_table(LEASE_TABLE, &db_client).await;
+
+    let client = dynamodb_lease::Client::builder()
+        .table_name(LEASE_TABLE)
+        // spam extension to make this test fast
+        .extend_every(Duration::from_millis(1))
+        .build_and_check_db(db_client.clone())
+        .await
+        .unwrap();
+
+    let lease_key = format!("is_healthy:{}", Uuid::new_v4());
+
+    let lease = client
+        .try_acquire(&lease_key)
+        .await
+        .expect("Could not acquire")
+        .expect("try_acquire returned None");
+
+    // should be healthy, extension task alive and well
+    assert!(lease.is_healthy());
+
+    // simulate db comms error by deleting the table
+    db_client
+        .delete_table()
+        .table_name(LEASE_TABLE)
+        .send()
+        .await
+        .unwrap();
+
+    // eventually the extend task will fail and the lease should become !healthy
+    let deleted = Instant::now();
+    while lease.is_healthy() && deleted.elapsed() < Duration::from_secs(4) {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(!lease.is_healthy());
 }
 
 #[tokio::test]
