@@ -42,7 +42,7 @@ You may also need to setup some aws config, e.g.
   [default]
   region = eu-west-1
   ```
-- setup `~/.aws/credentials` with fakes values
+- setup `~/.aws/credentials` with fake values
   ```
   [default]
   aws_access_key_id=12341234

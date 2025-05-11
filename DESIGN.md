@@ -1,5 +1,5 @@
 # dynamodb-lease design
-_dynanmodb-lease_ makes use of dynamodb condition experssions & ttl to provide concurrent-safe distributed leases.
+_dynanmodb-lease_ makes use of dynamodb condition expressions & ttl to provide concurrent-safe distributed leases.
 
 ## Table
 The lease table has the following fields:
