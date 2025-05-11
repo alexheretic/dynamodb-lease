@@ -1,4 +1,4 @@
-## Unreleased (0.22.1)
+## 0.22.1
 * Overwrite expired leases on acquire. This handles the case a crashed lease holder
   has not cleaned up db state faster than waiting for db ttl cleanup.
 * Add `Lease::is_healthy` fn.
