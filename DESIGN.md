@@ -13,7 +13,7 @@ To acquire a lease for key `foo` _(using default config values)_
 * _PutItem_ with key: `foo` with:
   - `lease_version` a unique id.
   - `lease_expiry` unix timestamp set to 60s from now.
-  - Condition that the item does not exist yet.
+  - Condition that the item does not exist yet (or _does_ but has expired).
 * In the background periodically _UpdateItem_ key: `foo` with:
   - `lease_version` a new unique id.
   - `lease_expiry` 60s from now.
@@ -28,14 +28,15 @@ When finished the `Lease` is dropped.
 A new lease can now be acquired.
 
 ## Edge cases, issues & error scenarios
-Dynamodb leases provide decent exclusivity for the initial `lease_expiry` and make a "best effort" to extend for as long as needed. Because of this, the use of leases alone may not provide enough guarantee for processes that **must** never lose exclusivity.
+Dynamodb leases provide decent exclusivity for the initial `lease_expiry` and make a "best effort" to extend for as long as needed. See `Lease::is_healthy` method.
 
 ### Lost access to db after acquiring lease
 If access to the db is lost _after_ acquiring a lease the background task will be unable to _UpdateItem_ to extend the lease. The lease also will not be able to _DeleteItem_ on drop.
 
 * The lease is still exclusive for the original `lease_expiry` ttl. 
   It makes sense then to set the ttl to longer than the expected max duration needed to provide a decent guarantee of exclusivity.
-* As _DeleteItem_ fails other tasks will remain blocked, but only until the `lease_expiry` ttl triggers dynamodb to remove the item. So this is not a deadlock, but does inform that the ttl shouldn't be _too_ long.
+* As _DeleteItem_ fails other tasks will remain blocked, but only until the `lease_expiry`.
+  So this is not a deadlock, but does inform that the ttl shouldn't be _too_ long.
 
 ### Clock skew
 The client uses the local clock to generate `lease_expiry` timestamps. To mitigate client clock skews consider lengthening the `lease_expiry` ttl.
