@@ -26,10 +26,10 @@ impl LocalLocks {
 
     pub(crate) fn try_remove(&self, key: String) {
         let mut locks = self.0.lock().unwrap();
-        if let Entry::Occupied(entry) = locks.entry(key) {
-            if Arc::strong_count(entry.get()) == 1 {
-                entry.remove();
-            }
+        if let Entry::Occupied(entry) = locks.entry(key)
+            && Arc::strong_count(entry.get()) == 1
+        {
+            entry.remove();
         }
     }
 }
