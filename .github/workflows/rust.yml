@@ -13,7 +13,7 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
     - run: rustup update stable
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Setup dynamodb-local
       uses: rrainn/dynamodb-action@v2.0.1
       with:
@@ -27,5 +27,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - run: rustup update stable
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - run: cargo fmt -- --check
