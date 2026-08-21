@@ -147,6 +147,7 @@ impl Client {
 
     /// Delete a lease with a given `key` & `lease_v`.
     #[instrument(skip_all)]
+    #[expect(clippy::result_large_err)] // upstream types
     pub(crate) async fn delete_lease(
         &self,
         key: String,
@@ -169,6 +170,7 @@ impl Client {
 
     /// Extends an active lease. Returns the new `lease_v` uuid.
     #[instrument(skip_all)]
+    #[expect(clippy::result_large_err)] // upstream types
     pub(crate) async fn extend_lease(
         &self,
         key: String,
